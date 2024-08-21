@@ -1,13 +1,16 @@
 // Import necessary modules from the Solana client and related libraries
+use dns_lookup::lookup_host;
+use mpl_token_metadata::accounts::Metadata;
+use solana_client::rpc_client::RpcClient;
+use solana_program::program_pack::Pack;
 use solana_sdk::pubkey::Pubkey;
+use spl_token::state::Mint;
+use std::collections::HashMap;
 use std::env;
 use std::str::FromStr;
-use solana_client::rpc_client::RpcClient;
 use std::sync::Arc;
 use tokio::task;
-use spl_token::state::Mint;
-use solana_program::program_pack::Pack;
-use mpl_token_metadata::accounts::Metadata;
+use url::Url;
 
 #[tokio::main]
 async fn main() {
@@ -18,7 +21,7 @@ async fn main() {
         return;
     }
     let token_address = &args[1];
-    
+
     // Convert the token address string to a Pubkey
     let token_pubkey = match Pubkey::from_str(token_address) {
         Ok(pubkey) => pubkey,
@@ -74,7 +77,69 @@ async fn main() {
     // Print token information
     println!("Token name: {}", token_name);
     println!("Token symbol: {}", token_symbol);
-    println!("Token URI: {}", token_uri);
     println!("Supply: {}", token_info.supply);
 
+    // Fetch additional metadata from the token URI
+    let hsmp_uri_metadata = match reqwest::get(&token_uri).await {
+        Ok(resp) => match resp.json::<HashMap<String, String>>().await {
+            Ok(json) => json,
+            Err(_) => {
+                eprintln!("Failed to parse JSON metadata.");
+                return;
+            }
+        },
+        Err(err) => {
+            println!("Failed to request from uri of metadata: {}", err);
+            return;
+        }
+    };
+
+    // Check if the website field exists in the metadata
+    match hsmp_uri_metadata
+        .get("website")
+        .or(hsmp_uri_metadata.get("site"))
+    {
+        Some(site) => {
+            let website_hostname = match Url::parse(&site) {
+                Ok(parsed_url) => parsed_url.host_str().unwrap_or("").to_string(),
+                Err(_) => {
+                    eprintln!("Failed to parse website URL.");
+                    return;
+                }
+            };
+
+            // Print the website information
+            println!("Website: {}", site);
+            println!("Domain name: {}", website_hostname);
+
+            // Fetch DNS records asynchronously if the website exists
+            let dns_records =
+                match task::spawn_blocking(move || match lookup_host(&website_hostname) {
+                    Ok(ips) => ips,
+                    Err(err) => {
+                        eprintln!("Failed to lookup DNS records: {}", err);
+                        vec![]
+                    }
+                })
+                .await
+                {
+                    Ok(records) => records,
+                    Err(_) => {
+                        eprintln!("Failed to fetch DNS records.");
+                        return;
+                    }
+                };
+
+            // Print the number of DNS records found
+            println!("Number of Website DNS Records : {}", dns_records.len());
+            // Print each IP address found
+            for ip in dns_records {
+                println!("IP Address: {}", ip);
+            }
+        }
+        _ => {
+            eprintln!("Website not found in metadata");
+            return;
+        }
+    };
 }
