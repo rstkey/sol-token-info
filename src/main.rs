@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio::task;
 use spl_token::state::Mint;
 use solana_program::program_pack::Pack;
+use mpl_token_metadata::accounts::Metadata;
 
 #[tokio::main]
 async fn main() {
@@ -45,6 +46,35 @@ async fn main() {
         }
     };
 
-    println!("{}", token_info.supply);
+    // Fetch metadata for the token to get the name, symbol, and website
+    let client_clone = Arc::clone(&client);
+    let metadata_pubkey = Metadata::find_pda(&token_pubkey).0;
+    let metadata_account = match client_clone.get_account(&metadata_pubkey) {
+        Ok(account) => account,
+        Err(_) => {
+            eprintln!("Failed to fetch metadata account.");
+            return;
+        }
+    };
+
+    // Deserialize the metadata account data
+    let metadata = match Metadata::safe_deserialize(&metadata_account.data) {
+        Ok(data) => data,
+        Err(_) => {
+            eprintln!("Failed to deserialize metadata.");
+            return;
+        }
+    };
+
+    // Extract token information from the metadata
+    let token_name = metadata.name;
+    let token_symbol = metadata.symbol;
+    let token_uri = metadata.uri;
+
+    // Print token information
+    println!("Token name: {}", token_name);
+    println!("Token symbol: {}", token_symbol);
+    println!("Token URI: {}", token_uri);
+    println!("Supply: {}", token_info.supply);
 
 }
